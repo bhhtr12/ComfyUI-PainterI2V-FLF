@@ -104,14 +104,12 @@ Prompt Tips:
 Clearly describe motion rhythm (e.g., "quickly running", "smoothly walking")
 Avoid vague descriptions like "moving" or "walking"
 📊 Technical Details
-Motion Amplitude Scale
-表格
-复制
-Parameter	Motion Boost	Brightness Change	Best Use Case
-1.0 (Original)	0%	None	Slow motion effects
-1.15 (Default)	+15%	None	General purpose
-1.3	+30%	None	Sports & fast action
-1.5	+50%	None	Extreme motion
+| Parameter Value | Motion Enhancement | Brightness Change | Applicable Scenario |
+| --------------- | ------------------ | ----------------- | ------------------- |
+| 1.0 (Original)  | 0%                 | None              | Slow-motion Effects |
+| 1.15 (Default)  | +15%               | None              | General Scenarios   |
+| 1.3             | +30%               | None              | Sports Events       |
+| 1.5             | +50%               | None              | Extreme Sports      |
 Core Algorithm
 Brightness-Preserving Motion Scaling: Separates motion vectors from brightness mean before amplification
 Zero Latent Initialization: Maintains 4-step LoRA's strict temporal dependency chain
@@ -126,6 +124,7 @@ Example workflow (JSON)
 Sample input/output
 📄 License
 MIT License
+
 
 
 
