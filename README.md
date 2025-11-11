@@ -35,7 +35,7 @@ Wan2.2 图生视频增强节点，专门针对4步LoRA（如 lightx2v）的慢�
 </table>
 
 
-以上视频对比效果，我是使用wan2.2官方模型+light2v 4步i2v lora V1.0做的测试，其他模型使用效果有待各位自行测试
+以上视频对比效果，我是使用wan2.2官方模型+light2v 4步i2v lora V1.0做的测试（见下图），其他模型使用效果有待各位自行测试
 
  ![我使用的模型和lora](image/QQ截图20251111171920.jpg)
 ## 节点特点
@@ -119,6 +119,8 @@ This node is created by Douyin creator: 绘画小子
 
 PainterI2V node that specifically fixes the slow-motion issue in 4-step LoRAs (e.g., lightx2v).
 
+The comparative effects in the above video are from my test using the official Wan2.2 model + Light2v 4-step I2V LoRA V1.0. The performance of other models awaits your own testing .
+
 ## 🛠 Problems Solved
 
 - ✅ Reduces Slow-Motion Drag: Increases motion amplitude by 15-50% 
@@ -198,6 +200,7 @@ In your workflow, replace `WanImageToVideo` with `PainterI2V`.
 If you find this project helpful, please give it a star ⭐ to show your support!
 </div>
 # Restart ComfyUI
+
 
 
 
