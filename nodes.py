@@ -7,6 +7,10 @@ from comfy_api.latest import io, ComfyExtension
 from typing_extensions import override
 
 class PainterI2V(io.ComfyNode):
+    """
+    An enhanced Wan2.2 Image-to-Video node specifically designed to fix the slow-motion issue in 4-step LoRAs (like lightx2v).
+    FLF triggered when end_image is connected. works like normal I2V when end_image is empty
+    """
     
     @classmethod
     def define_schema(cls):
@@ -163,3 +167,4 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PainterI2V": "PainterI2V (Wan2.2 Slow-Motion Fix)",
 }
+
