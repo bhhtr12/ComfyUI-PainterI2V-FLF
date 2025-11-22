@@ -1,14 +1,12 @@
 import torch
 import comfy.model_management
 import comfy.utils
+import comfy.clip_vision 
 import node_helpers
 from comfy_api.latest import io, ComfyExtension
 from typing_extensions import override
 
 class PainterI2V(io.ComfyNode):
-    """
-    An enhanced Wan2.2 Image-to-Video node specifically designed to fix the slow-motion issue in 4-step LoRAs (like lightx2v).
-    """
     
     @classmethod
     def define_schema(cls):
@@ -24,8 +22,10 @@ class PainterI2V(io.ComfyNode):
                 io.Int.Input("length", default=81, min=1, max=4096, step=4),
                 io.Int.Input("batch_size", default=1, min=1, max=4096),
                 io.Float.Input("motion_amplitude", default=1.15, min=1.0, max=2.0, step=0.05),
-                io.ClipVisionOutput.Input("clip_vision_output", optional=True),
+                io.ClipVisionOutput.Input("clip_vision_output", optional=True), # Treated as Start CV
+                io.ClipVisionOutput.Input("clip_vision_output_end", optional=True), # Treated as End CV
                 io.Image.Input("start_image", optional=True),
+                io.Image.Input("end_image", optional=True),
             ],
             outputs=[
                 io.Conditioning.Output(display_name="positive"),
@@ -36,44 +36,77 @@ class PainterI2V(io.ComfyNode):
 
     @classmethod
     def execute(cls, positive, negative, vae, width, height, length, batch_size,
-                motion_amplitude=1.15, start_image=None, clip_vision_output=None) -> io.NodeOutput:
-        # 1. 严格的零latent初始化（4步LoRA的生命线）
-        latent = torch.zeros([batch_size, 16, ((length - 1) // 4) + 1, height // 8, width // 8], 
+                motion_amplitude=1.15, start_image=None, end_image=None, 
+                clip_vision_output=None, clip_vision_output_end=None) -> io.NodeOutput:
+        
+        # 1. 严格的零latent初始化
+        latent_time_dim = ((length - 1) // 4) + 1
+        latent = torch.zeros([batch_size, 16, latent_time_dim, height // 8, width // 8], 
                            device=comfy.model_management.intermediate_device())
         
+        image = torch.ones((length, height, width, 3), dtype=torch.float32, device=comfy.model_management.intermediate_device()) * 0.5
+        
+        has_image_input = False
+
+        # --- start Image ---
         if start_image is not None:
-            # 单帧输入处理
+            has_image_input = True
             start_image = start_image[:1]
             start_image = comfy.utils.common_upscale(
                 start_image.movedim(-1, 1), width, height, "bilinear", "center"
             ).movedim(1, -1)
-            
-            # 创建序列：首帧真实，后续0.5灰
-            image = torch.ones((length, height, width, start_image.shape[-1]), 
-                             device=start_image.device, dtype=start_image.dtype) * 0.5
             image[0] = start_image[0]
-            
+
+        # --- end Image ---
+        if end_image is not None:
+            has_image_input = True
+            end_image = end_image[:1]
+            end_image = comfy.utils.common_upscale(
+                end_image.movedim(-1, 1), width, height, "bilinear", "center"
+            ).movedim(1, -1)
+            image[-1] = end_image[0]
+
+        if has_image_input:
             concat_latent_image = vae.encode(image[:, :, :, :3])
             
-            # 单帧mask：仅约束首帧
             mask = torch.ones((1, 1, latent.shape[2], concat_latent_image.shape[-2], 
                              concat_latent_image.shape[-1]), 
-                            device=start_image.device, dtype=start_image.dtype)
-            mask[:, :, 0] = 0.0
+                            device=concat_latent_image.device, dtype=concat_latent_image.dtype)
             
-            # 2. 运动幅度增强（亮度保护核心算法）
+            if start_image is not None:
+                mask[:, :, 0] = 0.0
+            
+            if end_image is not None:
+                mask[:, :, -1] = 0.0
+            
+            # 2. 运动幅度增强 (Motion/Brightness Fix)
             if motion_amplitude > 1.0:
-                base_latent = concat_latent_image[:, :, 0:1]      # 首帧
-                gray_latent = concat_latent_image[:, :, 1:]       # 灰帧
+                base_latent = concat_latent_image[:, :, 0:1]
                 
-                diff = gray_latent - base_latent
-                diff_mean = diff.mean(dim=(1, 3, 4), keepdim=True)
-                diff_centered = diff - diff_mean
-                scaled_latent = base_latent + diff_centered * motion_amplitude + diff_mean
-                
-                # Clamp & 组合
-                scaled_latent = torch.clamp(scaled_latent, -6, 6)
-                concat_latent_image = torch.cat([base_latent, scaled_latent], dim=2)
+                if end_image is not None:
+                    # if end image exist, we only amplify the middle grey frames. last frame stays safe
+                    middle_latent = concat_latent_image[:, :, 1:-1]
+                    end_latent = concat_latent_image[:, :, -1:]
+                    
+                    diff = middle_latent - base_latent
+                    diff_mean = diff.mean(dim=(1, 3, 4), keepdim=True)
+                    diff_centered = diff - diff_mean
+                    scaled_middle = base_latent + diff_centered * motion_amplitude + diff_mean
+                    scaled_middle = torch.clamp(scaled_middle, -6, 6)
+                    
+                    # reconstruct
+                    concat_latent_image = torch.cat([base_latent, scaled_middle, end_latent], dim=2)
+                else:
+                    # original behavior
+                    gray_latent = concat_latent_image[:, :, 1:]
+                    
+                    diff = gray_latent - base_latent
+                    diff_mean = diff.mean(dim=(1, 3, 4), keepdim=True)
+                    diff_centered = diff - diff_mean
+                    scaled_latent = base_latent + diff_centered * motion_amplitude + diff_mean
+                    
+                    scaled_latent = torch.clamp(scaled_latent, -6, 6)
+                    concat_latent_image = torch.cat([base_latent, scaled_latent], dim=2)
             
             # 3. 注入到conditioning
             positive = node_helpers.conditioning_set_values(
@@ -83,14 +116,30 @@ class PainterI2V(io.ComfyNode):
                 negative, {"concat_latent_image": concat_latent_image, "concat_mask": mask}
             )
 
-            # 4. 参考帧增强
-            ref_latent = vae.encode(start_image[:, :, :, :3])
-            positive = node_helpers.conditioning_set_values(positive, {"reference_latents": [ref_latent]}, append=True)
-            negative = node_helpers.conditioning_set_values(negative, {"reference_latents": [torch.zeros_like(ref_latent)]}, append=True)
+            # 4. 参考帧增强 (Keeping original Painter logic for Start Image)
+            if start_image is not None:
+                ref_latent = vae.encode(start_image[:, :, :, :3])
+                positive = node_helpers.conditioning_set_values(positive, {"reference_latents": [ref_latent]}, append=True)
+                negative = node_helpers.conditioning_set_values(negative, {"reference_latents": [torch.zeros_like(ref_latent)]}, append=True)
 
+        # clip vision just in case
+        final_clip_vision = None
+        
         if clip_vision_output is not None:
-            positive = node_helpers.conditioning_set_values(positive, {"clip_vision_output": clip_vision_output})
-            negative = node_helpers.conditioning_set_values(negative, {"clip_vision_output": clip_vision_output})
+            final_clip_vision = clip_vision_output
+            
+        if clip_vision_output_end is not None:
+            if final_clip_vision is not None:
+                states = torch.cat([final_clip_vision.penultimate_hidden_states, 
+                                  clip_vision_output_end.penultimate_hidden_states], dim=-2)
+                final_clip_vision = comfy.clip_vision.Output()
+                final_clip_vision.penultimate_hidden_states = states
+            else:
+                final_clip_vision = clip_vision_output_end
+
+        if final_clip_vision is not None:
+            positive = node_helpers.conditioning_set_values(positive, {"clip_vision_output": final_clip_vision})
+            negative = node_helpers.conditioning_set_values(negative, {"clip_vision_output": final_clip_vision})
 
         out_latent = {}
         out_latent["samples"] = latent
@@ -114,4 +163,3 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PainterI2V": "PainterI2V (Wan2.2 Slow-Motion Fix)",
 }
-
